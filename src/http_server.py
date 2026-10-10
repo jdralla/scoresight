@@ -238,6 +238,10 @@ def start_http_server():
         log_config=None,
         access_log=bool(os.getenv("SCORESIGHT_DEBUG")),
         lifespan="on",
+        # The API is plain HTTP. Leaving ws="auto" makes uvicorn import its
+        # websockets backend, which fails against the websockets==9.1 pin
+        # (needed elsewhere) and takes the whole server down with it.
+        ws="none",
         timeout_graceful_shutdown=1,
     )
     server = uvicorn.Server(config)
