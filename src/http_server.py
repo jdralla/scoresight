@@ -1,9 +1,6 @@
 import asyncio
-import http.server
-import http.client
 import logging
 import os
-import signal
 import socket
 import threading
 from fastapi import FastAPI, Query
@@ -199,55 +196,82 @@ async def get_csv():
 
 def is_port_in_use(port: int) -> bool:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        return s.connect_ex(("localhost", port)) == 0
+        return s.connect_ex(("127.0.0.1", port)) == 0
+
+
+# Bind address for the HTTP API. Defaults to all interfaces (previous behavior)
+# so other machines on the LAN can read results; set SCORESIGHT_HTTP_HOST=127.0.0.1
+# to keep the API local to this computer.
+HOST = os.getenv("SCORESIGHT_HTTP_HOST", "0.0.0.0")
+
+_server: uvicorn.Server | None = None
+_server_thread: threading.Thread | None = None
 
 
 def start_http_server():
-    def run_uvicorn():
-        if is_port_in_use(PORT):
-            logger.error(f"Port {PORT} is already in use")
-            return
+    """Start the HTTP API on a background daemon thread.
 
-        config = uvicorn.Config(
-            app=app,
-            host="0.0.0.0",
-            port=PORT,
-            loop="asyncio",
-            log_level="debug" if os.getenv("SCORESIGHT_DEBUG") else "info",
-            log_config=None,
-            lifespan="on",
+    The uvicorn.Server object is kept so that stop_http_server() can ask it to
+    exit cleanly. Previously shutdown relied on the process sending SIGINT to
+    itself, which never reaches uvicorn when it runs off the main thread and
+    could leave the app hanging on quit.
+    """
+    global _server, _server_thread
+
+    if _server_thread is not None and _server_thread.is_alive():
+        logger.warning("HTTP server already running")
+        return
+
+    if is_port_in_use(PORT):
+        logger.error(
+            f"Port {PORT} is already in use - the HTTP API will NOT be available. "
+            "Is another copy of ScoreSight still running?"
         )
-        server = uvicorn.Server(config)
+        return
+
+    config = uvicorn.Config(
+        app=app,
+        host=HOST,
+        port=PORT,
+        loop="asyncio",
+        log_level="debug" if os.getenv("SCORESIGHT_DEBUG") else "info",
+        log_config=None,
+        access_log=bool(os.getenv("SCORESIGHT_DEBUG")),
+        lifespan="on",
+        timeout_graceful_shutdown=1,
+    )
+    server = uvicorn.Server(config)
+
+    def run_uvicorn():
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-
-        logger.info(f"Server starting at port {PORT}")
+        logger.info(f"Server starting at {HOST}:{PORT}")
         try:
             loop.run_until_complete(server.serve())
         except Exception as e:
             logger.error(f"Error running server: {e}")
-        loop.close()
+        finally:
+            loop.close()
         logger.info("Server thread stopped")
 
-    # Start Uvicorn server in a separate thread
-    server_thread = threading.Thread(target=run_uvicorn)
-    server_thread.start()
+    _server = server
+    # daemon=True: the interpreter never waits on this thread at exit
+    _server_thread = threading.Thread(target=run_uvicorn, name="http-server", daemon=True)
+    _server_thread.start()
 
 
-@app.get("/shutdown")
-async def shutdown():
-    os.kill(os.getpid(), signal.SIGINT)
-    return {"message": "Initiating shutdown..."}
-
-
-def stop_http_server():
+def stop_http_server(timeout: float = 2.0):
+    """Ask the HTTP server to exit and wait (bounded) for its thread."""
+    global _server, _server_thread
     logger.info("Stopping server...")
-    try:
-        conn = http.client.HTTPConnection("localhost", PORT)
-        conn.request("GET", "/shutdown")
-        conn.close()
-    except Exception as e:
-        pass
+    if _server is not None:
+        _server.should_exit = True
+    if _server_thread is not None:
+        _server_thread.join(timeout)
+        if _server_thread.is_alive():
+            logger.warning("HTTP server did not stop within %.1fs", timeout)
+    _server = None
+    _server_thread = None
 
 
 def update_http_server(results: list[TextDetectionTargetWithResult]):
