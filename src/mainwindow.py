@@ -808,6 +808,40 @@ class MainWindow(QMainWindow):
                 self.ui.comboBox_camera_source.setCurrentText(
                     selected_source_from_storage
                 )
+        elif selected_source_from_storage is None:
+            # reopen the last used camera, matched by its unique ID first and
+            # by its name as a fallback (IDs can change, e.g. NDI sources)
+            camera_from_storage = fetch_data("scoresight.json", "camera_selected")
+            if isinstance(camera_from_storage, dict):
+                self.restoreCameraSelection(camera_from_storage)
+
+    def restoreCameraSelection(self, stored_camera: dict) -> bool:
+        combo = self.ui.comboBox_camera_source
+        match_index = -1
+        for key in ("uuid", "description"):
+            wanted = stored_camera.get(key)
+            if not wanted:
+                continue
+            for i in range(4, combo.count()):
+                item = combo.itemData(i)
+                if item is not None and getattr(item, key, None) == wanted:
+                    match_index = i
+                    break
+            if match_index >= 0:
+                break
+        if match_index < 0:
+            logger.info(
+                "Last used camera not found: %s", stored_camera.get("description")
+            )
+            return False
+        logger.info("Reopening last used camera: %s", combo.itemText(match_index))
+        if combo.currentIndex() == match_index:
+            # setCurrentIndex would not emit currentIndexChanged
+            self.sourceChanged(match_index)
+        else:
+            # triggers sourceChanged -> sourceSelectionSucessful, which opens it
+            combo.setCurrentIndex(match_index)
+        return True
 
     def reset_playing_source(self):
         if self.image_viewer:
@@ -895,6 +929,19 @@ class MainWindow(QMainWindow):
             # get the window ID from the comboBox_window
             window_id = ui_screencapture.comboBox_window.currentData()
             self.source_name = window_id
+        else:
+            # a camera / NDI source: remember which device it was so it can be
+            # reopened on the next launch (source_selected stays None)
+            camera_info = self.ui.comboBox_camera_source.currentData()
+            if camera_info is not None:
+                self.globalSettingsChanged(
+                    "camera_selected",
+                    {
+                        "uuid": camera_info.uuid,
+                        "description": camera_info.description,
+                        "type": camera_info.type,
+                    },
+                )
 
         # store the source selection in scoresight.json
         self.globalSettingsChanged("source_selected", self.source_name)
