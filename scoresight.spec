@@ -154,25 +154,39 @@ if args.win:
         name='scoresight'
     )
 elif args.mac_osx:
+    # Build a "onedir" app bundle on macOS. A onefile EXE inside a .app has to
+    # unpack its whole payload (Qt, OpenCV, Tesseract, NDI, ...) into a temp
+    # folder on every launch and delete it on every quit, which makes startup
+    # and shutdown slow. With COLLECT the libraries live inside the .app.
     exe = EXE(
         pyz,
-        a.binaries,
-        a.datas,
         a.scripts,
+        [],
+        exclude_binaries=True,
         name='scoresight',
         debug=args.debug is not None and args.debug,
         bootloader_ignore_signals=False,
         strip=False,
-        upx=True,
+        upx=False,
         console=False,
         disable_windowed_traceback=False,
         argv_emulation=False,
-        target_arch=None,
+        # None = architecture of the build machine; set SCORESIGHT_TARGET_ARCH
+        # to arm64 / x86_64 / universal2 to override.
+        target_arch=os.environ.get('SCORESIGHT_TARGET_ARCH') or None,
         codesign_identity=os.environ.get('APPLE_APP_DEVELOPER_ID', ''),
         entitlements_file='./entitlements.plist',
     )
-    app = BUNDLE(
+    coll = COLLECT(
         exe,
+        a.binaries,
+        a.datas,
+        strip=False,
+        upx=False,
+        name='scoresight',
+    )
+    app = BUNDLE(
+        coll,
         name='scoresight.app',
         icon='icons/MacOS_icon.png',
         bundle_identifier='com.royshilkrot.scoresight',
