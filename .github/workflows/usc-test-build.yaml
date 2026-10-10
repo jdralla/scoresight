@@ -1,0 +1,47 @@
+name: USC test build (macOS arm64)
+
+# Builds the unsigned Apple Silicon test app from this branch and attaches it
+# to a pre-release. Run it from the Actions tab ("Run workflow") or by pushing
+# a tag that starts with usc-test-.
+on:
+  workflow_dispatch:
+  push:
+    tags: ['usc-test-*']
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-14
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and smoke-test
+        run: |
+          BRANCH="${GITHUB_REF_NAME}" BUILD_ONLY=1 bash scripts/usc/build_and_test_mac.sh
+      - name: Zip
+        id: zip
+        run: |
+          SHORT="$(git -C "$HOME/ScoreSight-build/src" rev-parse --short HEAD)"
+          ZIP="ScoreSight-USC-test-$SHORT-arm64.zip"
+          ditto -c -k --keepParent "$HOME/ScoreSight-build/src/dist/scoresight.app" "$ZIP"
+          shasum -a 256 "$ZIP"
+          echo "zip=$ZIP" >> "$GITHUB_OUTPUT"
+          echo "short=$SHORT" >> "$GITHUB_OUTPUT"
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs
+          path: ~/ScoreSight-build/logs
+      - name: Publish pre-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="usc-test-${{ steps.zip.outputs.short }}"
+          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --prerelease \
+            --target "$GITHUB_SHA" \
+            --title "USC test build ${{ steps.zip.outputs.short }} (macOS Apple Silicon)" \
+            --notes-file scripts/usc/TEST_BUILD_NOTES.md
+          gh release upload "$TAG" "${{ steps.zip.outputs.zip }}" --clobber

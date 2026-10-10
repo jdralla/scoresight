@@ -1,5 +1,5 @@
 #!/bin/bash
-# ScoreSight (USC fork) - macOS build + launch/quit timing test, v1.3
+# ScoreSight (USC fork) - macOS build + launch/quit timing test, v1.4
 #
 # What it does:
 #   1. Checks this Mac (Apple Silicon, Xcode command line tools, Homebrew)
@@ -21,7 +21,7 @@
 # backed up before the test and restored afterwards.
 
 set -u
-VERSION="v1.3"
+VERSION="v1.4"
 BRANCH="${BRANCH:-usc/startup-shutdown-fixes}"
 REPO_URL="https://github.com/jdralla/scoresight.git"
 BASELINE_URL="https://github.com/royshil/scoresight/releases/download/0.1.0/scoresight-macos-arm64-0.1.0.dmg"
@@ -148,6 +148,7 @@ if [ "${SKIP_BUILD:-0}" != "1" ]; then
   for _ in $(seq 1 50); do port_up || break; sleep 0.1; done
   info "Smoke test: OK (HTTP API answered after ${SMOKE_S}s)"
   info "Built: $APP_NEW  ($(du -sh "$APP_NEW" | cut -f1), $(lipo -archs "$APP_NEW/Contents/MacOS/scoresight"))"
+  if [ "${BUILD_ONLY:-0}" = "1" ]; then say "Build only (BUILD_ONLY=1) - skipping the timing test."; exit 0; fi
 else
   say "2-3/5 Skipping build (SKIP_BUILD=1)"
   [ -d "$APP_NEW" ] || die "No previous build at $APP_NEW."
