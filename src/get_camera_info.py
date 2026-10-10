@@ -1,7 +1,8 @@
+import os
 import platform
 from camera_info import CameraInfo
-from ndi import NDICapture
 from sc_logging import logger
+from storage import fetch_data
 
 # This file contains the code to get the camera information for the current OS
 
@@ -58,6 +59,12 @@ def get_camera_info_linux():
     return device_info
 
 
+def ndi_enabled() -> bool:
+    if os.getenv("SCORESIGHT_DISABLE_NDI"):
+        return False
+    return bool(fetch_data("scoresight.json", "enable_ndi", True))
+
+
 def get_camera_info() -> list[CameraInfo]:
     logger.info("Getting cameras info")
     os_name = platform.system()
@@ -69,7 +76,17 @@ def get_camera_info() -> list[CameraInfo]:
     elif os_name == "Linux":
         cameras += get_camera_info_linux()
 
-    # Add NDI cameras
-    cameras += NDICapture.get_camera_info_ndi()
+    # Add NDI cameras. NDI discovery can be turned off with "enable_ndi": false
+    # in scoresight.json or SCORESIGHT_DISABLE_NDI=1, which also avoids loading
+    # the NDI runtime at all.
+    if ndi_enabled():
+        try:
+            from ndi import NDICapture
+
+            cameras += NDICapture.get_camera_info_ndi()
+        except Exception as e:
+            logger.error(f"Could not enumerate NDI sources: {e}")
+    else:
+        logger.info("NDI discovery disabled")
 
     return cameras
