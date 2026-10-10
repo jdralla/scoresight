@@ -104,12 +104,20 @@ if args.mac_osx:
 numpy_datas, numpy_binaries, numpy_hiddenimports = collect_all('numpy')
 ws_hiddenimports=['websockets', 'websockets.legacy']
 
+# tesserocr built from source (macOS/Linux) imports cysignals from inside its
+# compiled extension, where PyInstaller's import scan cannot see it. Without
+# this the frozen app dies at launch with "No module named 'cysignals'".
+import importlib.util
+extra_datas, extra_binaries, extra_hiddenimports = [], [], []
+if importlib.util.find_spec('cysignals') is not None:
+    extra_datas, extra_binaries, extra_hiddenimports = collect_all('cysignals')
+
 a = Analysis(
     sources,
     pathex=[],
-    binaries=numpy_binaries,
-    datas=datas + numpy_datas,
-    hiddenimports=numpy_hiddenimports + ws_hiddenimports,
+    binaries=numpy_binaries + extra_binaries,
+    datas=datas + numpy_datas + extra_datas,
+    hiddenimports=numpy_hiddenimports + ws_hiddenimports + extra_hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

@@ -1,3 +1,4 @@
+cysignals
 pyobjc-core
 pyobjc-framework-AVFoundation
 pyobjc-framework-Quartz

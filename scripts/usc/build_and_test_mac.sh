@@ -1,5 +1,5 @@
 #!/bin/bash
-# ScoreSight (USC fork) - macOS build + launch/quit timing test, v1.0
+# ScoreSight (USC fork) - macOS build + launch/quit timing test, v1.1
 #
 # What it does:
 #   1. Checks this Mac (Apple Silicon, Xcode command line tools, Homebrew)
@@ -21,7 +21,7 @@
 # backed up before the test and restored afterwards.
 
 set -u
-VERSION="v1.0"
+VERSION="v1.1"
 BRANCH="${BRANCH:-usc/startup-shutdown-fixes}"
 REPO_URL="https://github.com/jdralla/scoresight.git"
 BASELINE_URL="https://github.com/royshil/scoresight/releases/download/0.1.0/scoresight-macos-arm64-0.1.0.dmg"
@@ -113,6 +113,27 @@ if [ "${SKIP_BUILD:-0}" != "1" ]; then
     || die "PyInstaller build failed - see $LOGS/pyinstaller-$STAMP.log"
   deactivate
   [ -d "$APP_NEW" ] || die "Build finished but $APP_NEW is missing."
+  # Smoke test: run the binary directly so a launch crash shows up here, with
+  # its traceback, instead of as nine silent timeouts in the timing step.
+  info "Smoke test: launching the new build once..."
+  SMOKE="$LOGS/smoke-$STAMP.log"
+  "$APP_NEW/Contents/MacOS/scoresight" >"$SMOKE" 2>&1 &
+  SMOKE_PID=$!
+  SMOKE_OK=0
+  for _ in $(seq 1 600); do
+    if port_up; then SMOKE_OK=1; break; fi
+    kill -0 "$SMOKE_PID" 2>/dev/null || break
+    sleep 0.1
+  done
+  kill "$SMOKE_PID" 2>/dev/null; sleep 2; kill -9 "$SMOKE_PID" 2>/dev/null
+  pkill -9 -f "$APP_NEW/Contents/MacOS/" 2>/dev/null
+  wait "$SMOKE_PID" 2>/dev/null
+  if [ "$SMOKE_OK" != "1" ]; then
+    echo; tail -15 "$SMOKE"
+    die "The new build did not start (output above, full log: $SMOKE). Send this to Claude."
+  fi
+  for _ in $(seq 1 50); do port_up || break; sleep 0.1; done
+  info "Smoke test: OK (HTTP API answered)"
   info "Built: $APP_NEW  ($(du -sh "$APP_NEW" | cut -f1), $(lipo -archs "$APP_NEW/Contents/MacOS/scoresight"))"
 else
   say "2-3/5 Skipping build (SKIP_BUILD=1)"
@@ -166,6 +187,13 @@ run_one() {   # $1 label  $2 app path  $3 settings json  $4 run#
     if port_up; then t_up=$(now); up_s=$(echo "$t_up - $t0" | bc); break; fi
     sleep 0.1
   done
+  if [ "$up_s" = "timeout" ]; then      # never came up: not a valid quit measurement
+    pids_of "$app" | xargs kill -9 2>/dev/null
+    printf '    %-28s run %d:  FAILED TO START (no HTTP answer in 60 s)\n' "$label" "$n"
+    echo "$label,$n,failed,failed,FAILED TO START,0" >> "$CSV"
+    sleep 2
+    return
+  fi
   sleep 2                               # let it settle like a real session
   t_q=$(now)
   osascript -e "tell application \"$app\" to quit" >/dev/null 2>&1 &
@@ -188,7 +216,7 @@ run_one() {   # $1 label  $2 app path  $3 settings json  $4 run#
 
 for n in $(seq 1 "$RUNS"); do run_one "v0.1.0 official"           "$APP_OLD" '{}' "$n"; done
 for n in $(seq 1 "$RUNS"); do run_one "USC build"                 "$APP_NEW" '{}' "$n"; done
-for n in $(seq 1 "$RUNS"); do run_one "USC build, NDI off"        "$APP_NEW" '{"enable_ndi": false}' "$n"; done
+for n in $(seq 1 "$RUNS"); do run_one "USC build - NDI off"        "$APP_NEW" '{"enable_ndi": false}' "$n"; done
 
 restore_settings; trap - EXIT
 
@@ -200,14 +228,17 @@ restore_settings; trap - EXIT
   echo
   awk -F, 'NR>1 {
       k=$1; n[k]++
-      if ($3!="timeout") {u[k]+=$3; nu[k]++}
-      if ($4!="timeout") {q[k]+=$4; nq[k]++} else hung[k]++
+      if ($3=="failed") {fail[k]++; next_ok=0} else next_ok=1
+      if (next_ok) {
+        u[k]+=$3; nu[k]++
+        if ($4!="timeout") {q[k]+=$4; nq[k]++} else hung[k]++
+      }
       if (!(k in order)) {order[k]=++c; names[c]=k}
     }
     END {
-      printf "%-26s %18s %18s %8s\n", "Test", "avg launch->HTTP", "avg quit->exit", "hung"
+      printf "%-26s %18s %18s %6s %8s\n", "Test", "avg launch->HTTP", "avg quit->exit", "hung", "no-start"
       for (i=1;i<=c;i++){k=names[i]
-        printf "%-26s %17ss %17ss %8d\n", k, (nu[k]?sprintf("%.2f",u[k]/nu[k]):"-"), (nq[k]?sprintf("%.2f",q[k]/nq[k]):"-"), hung[k]+0 }
+        printf "%-26s %17ss %17ss %6d %8d\n", k, (nu[k]?sprintf("%.2f",u[k]/nu[k]):"-"), (nq[k]?sprintf("%.2f",q[k]/nq[k]):"-"), hung[k]+0, fail[k]+0 }
     }' "$CSV"
   echo
   echo "Raw data: $CSV"
