@@ -109,8 +109,12 @@ ws_hiddenimports=['websockets', 'websockets.legacy']
 # this the frozen app dies at launch with "No module named 'cysignals'".
 import importlib.util
 extra_datas, extra_binaries, extra_hiddenimports = [], [], []
-if importlib.util.find_spec('cysignals') is not None:
-    extra_datas, extra_binaries, extra_hiddenimports = collect_all('cysignals')
+# Same problem for cyndilib (NDI): its Cython modules import each other
+# (e.g. cyndilib.wrapper._cyutility) where PyInstaller cannot see it.
+for _pkg in ('cysignals', 'cyndilib'):
+    if importlib.util.find_spec(_pkg) is not None:
+        _d, _b, _h = collect_all(_pkg)
+        extra_datas += _d; extra_binaries += _b; extra_hiddenimports += _h
 
 a = Analysis(
     sources,
