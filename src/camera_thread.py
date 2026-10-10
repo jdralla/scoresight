@@ -271,7 +271,9 @@ class TimerThread(QThread):
 
         self.last_update_timestamp = datetime.now()
         self.last_frame_timestamp = datetime.now()
-        self.last_emit_time = datetime.now()
+        # datetime.min so the first frame is emitted immediately instead of
+        # after a full preview interval (boxes and OCR start on the first frame)
+        self.last_emit_time = datetime.min
 
         while not self.should_stop:
             if self.video_capture is None:
