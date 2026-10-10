@@ -1,12 +1,18 @@
 name: USC test build (macOS arm64)
 
 # Builds the unsigned Apple Silicon test app from this branch and attaches it
-# to a pre-release. Run it from the Actions tab ("Run workflow") or by pushing
-# a tag that starts with usc-test-.
+# to a pre-release named usc-test-<commit>. Runs whenever app code or build
+# files change on the USC branch.
 on:
   workflow_dispatch:
   push:
-    tags: ['usc-test-*']
+    branches: ['usc/startup-shutdown-fixes']
+    paths:
+      - 'src/**'
+      - 'scoresight.spec'
+      - 'requirements*.txt'
+      - 'scripts/usc/build_and_test_mac.sh'
+      - '.github/workflows/usc-test-build.yaml'
 
 permissions:
   contents: write
