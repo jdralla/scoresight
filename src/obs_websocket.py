@@ -1,11 +1,18 @@
+from __future__ import annotations
+
 import json
 from os import path
-import obsws_python as obs
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import obsws_python as obs
 from resource_path import resource_path
 from sc_logging import logger
 
 
 def open_obs_websocket(server_info):
+    import obsws_python as obs
+
     # Open a websocket connection to OBS
     try:
         cl = obs.ReqClient(
