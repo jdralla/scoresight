@@ -1,5 +1,5 @@
 #!/bin/bash
-# ScoreSight (USC fork) - macOS build + launch/quit timing test, v1.2
+# ScoreSight (USC fork) - macOS build + launch/quit timing test, v1.3
 #
 # What it does:
 #   1. Checks this Mac (Apple Silicon, Xcode command line tools, Homebrew)
@@ -21,7 +21,7 @@
 # backed up before the test and restored afterwards.
 
 set -u
-VERSION="v1.2"
+VERSION="v1.3"
 BRANCH="${BRANCH:-usc/startup-shutdown-fixes}"
 REPO_URL="https://github.com/jdralla/scoresight.git"
 BASELINE_URL="https://github.com/royshil/scoresight/releases/download/0.1.0/scoresight-macos-arm64-0.1.0.dmg"
@@ -120,11 +120,24 @@ if [ "${SKIP_BUILD:-0}" != "1" ]; then
   "$APP_NEW/Contents/MacOS/scoresight" >"$SMOKE" 2>&1 &
   SMOKE_PID=$!
   SMOKE_OK=0
-  for _ in $(seq 1 600); do
+  SMOKE_T0=$(now)
+  for _ in $(seq 1 1800); do            # up to 180 s: first launch of a new bundle is slow
     if port_up; then SMOKE_OK=1; break; fi
     kill -0 "$SMOKE_PID" 2>/dev/null || break
     sleep 0.1
   done
+  SMOKE_S=$(echo "$(now) - $SMOKE_T0" | bc)
+  if [ "$SMOKE_OK" != "1" ]; then       # collect evidence before killing it
+    if kill -0 "$SMOKE_PID" 2>/dev/null; then
+      echo "still running after ${SMOKE_S}s without HTTP" >> "$SMOKE"
+      sample "$SMOKE_PID" 3 -file "$LOGS/smoke-sample-$STAMP.txt" >/dev/null 2>&1
+    else
+      echo "process exited after ${SMOKE_S}s" >> "$SMOKE"
+    fi
+    APPLOG="$(ls -t "$HOME/Library/Logs/scoresight/"* 2>/dev/null | head -1)"
+    [ -n "$APPLOG" ] && cp "$APPLOG" "$LOGS/smoke-applog-$STAMP.log"
+    lsof -nP -iTCP:$PORT -sTCP:LISTEN >> "$SMOKE" 2>&1
+  fi
   kill "$SMOKE_PID" 2>/dev/null; sleep 2; kill -9 "$SMOKE_PID" 2>/dev/null
   pkill -9 -f "$APP_NEW/Contents/MacOS/" 2>/dev/null
   wait "$SMOKE_PID" 2>/dev/null
@@ -133,7 +146,7 @@ if [ "${SKIP_BUILD:-0}" != "1" ]; then
     die "The new build did not start (output above, full log: $SMOKE). Send this to Claude."
   fi
   for _ in $(seq 1 50); do port_up || break; sleep 0.1; done
-  info "Smoke test: OK (HTTP API answered)"
+  info "Smoke test: OK (HTTP API answered after ${SMOKE_S}s)"
   info "Built: $APP_NEW  ($(du -sh "$APP_NEW" | cut -f1), $(lipo -archs "$APP_NEW/Contents/MacOS/scoresight"))"
 else
   say "2-3/5 Skipping build (SKIP_BUILD=1)"
