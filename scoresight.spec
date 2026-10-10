@@ -104,18 +104,56 @@ if args.mac_osx:
 numpy_datas, numpy_binaries, numpy_hiddenimports = collect_all('numpy')
 ws_hiddenimports=['websockets', 'websockets.legacy']
 
+# tesserocr built from source (macOS/Linux) imports cysignals from inside its
+# compiled extension, where PyInstaller's import scan cannot see it. Without
+# this the frozen app dies at launch with "No module named 'cysignals'".
+import importlib.util
+extra_datas, extra_binaries, extra_hiddenimports = [], [], []
+# Same problem for cyndilib (NDI): its Cython modules import each other
+# (e.g. cyndilib.wrapper._cyutility) where PyInstaller cannot see it.
+for _pkg in ('cysignals', 'cyndilib'):
+    if importlib.util.find_spec(_pkg) is not None:
+        _d, _b, _h = collect_all(_pkg)
+        extra_datas += _d; extra_binaries += _b; extra_hiddenimports += _h
+
 a = Analysis(
     sources,
     pathex=[],
-    binaries=numpy_binaries,
-    datas=datas + numpy_datas,
-    hiddenimports=numpy_hiddenimports + ws_hiddenimports,
+    binaries=numpy_binaries + extra_binaries,
+    datas=datas + numpy_datas + extra_datas,
+    hiddenimports=numpy_hiddenimports + ws_hiddenimports + extra_hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
     excludes=['PyQt6'],
     noarchive=False,
 )
+
+if args.mac_osx:
+    # opencv-python ships its own, older OpenSSL (cv2/.dylibs/libssl.3.dylib,
+    # libcrypto.3.dylib). In a onedir bundle PyInstaller keeps one copy per
+    # file name, so Python's _ssl (built against the newer Homebrew OpenSSL)
+    # ends up loading cv2's copy and dies with "Symbol not found:
+    # _X509_STORE_get1_objects". OpenSSL 3.x is backward compatible, so ship
+    # the copy _ssl was linked against under both locations.
+    import _ssl, subprocess
+    openssl_override = {}
+    try:
+        for line in subprocess.check_output(['otool', '-L', _ssl.__file__], text=True).splitlines()[1:]:
+            lib = line.strip().split(' (')[0]
+            base = os.path.basename(lib)
+            if base.startswith(('libssl.', 'libcrypto.')) and os.path.isfile(lib):
+                openssl_override[base] = os.path.realpath(lib)
+    except Exception as e:
+        print('WARNING: could not locate the OpenSSL used by _ssl:', e)
+    print('OpenSSL override:', openssl_override)
+    a.binaries = [
+        (dest, openssl_override[os.path.basename(dest)], typ)
+        if typ != 'SYMLINK' and os.path.basename(dest) in openssl_override
+        else (dest, src, typ)
+        for (dest, src, typ) in a.binaries
+    ]
+
 pyz = PYZ(a.pure)
 
 if args.win:
