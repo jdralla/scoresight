@@ -256,7 +256,9 @@ def start_http_server():
 
     _server = server
     # daemon=True: the interpreter never waits on this thread at exit
-    _server_thread = threading.Thread(target=run_uvicorn, name="http-server", daemon=True)
+    _server_thread = threading.Thread(
+        target=run_uvicorn, name="http-server", daemon=True
+    )
     _server_thread.start()
 
 
