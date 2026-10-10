@@ -124,6 +124,32 @@ a = Analysis(
     excludes=['PyQt6'],
     noarchive=False,
 )
+
+if args.mac_osx:
+    # opencv-python ships its own, older OpenSSL (cv2/.dylibs/libssl.3.dylib,
+    # libcrypto.3.dylib). In a onedir bundle PyInstaller keeps one copy per
+    # file name, so Python's _ssl (built against the newer Homebrew OpenSSL)
+    # ends up loading cv2's copy and dies with "Symbol not found:
+    # _X509_STORE_get1_objects". OpenSSL 3.x is backward compatible, so ship
+    # the copy _ssl was linked against under both locations.
+    import _ssl, subprocess
+    openssl_override = {}
+    try:
+        for line in subprocess.check_output(['otool', '-L', _ssl.__file__], text=True).splitlines()[1:]:
+            lib = line.strip().split(' (')[0]
+            base = os.path.basename(lib)
+            if base.startswith(('libssl.', 'libcrypto.')) and os.path.isfile(lib):
+                openssl_override[base] = os.path.realpath(lib)
+    except Exception as e:
+        print('WARNING: could not locate the OpenSSL used by _ssl:', e)
+    print('OpenSSL override:', openssl_override)
+    a.binaries = [
+        (dest, openssl_override[os.path.basename(dest)], typ)
+        if typ != 'SYMLINK' and os.path.basename(dest) in openssl_override
+        else (dest, src, typ)
+        for (dest, src, typ) in a.binaries
+    ]
+
 pyz = PYZ(a.pure)
 
 if args.win:

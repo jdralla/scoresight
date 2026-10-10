@@ -1,5 +1,5 @@
 #!/bin/bash
-# ScoreSight (USC fork) - macOS build + launch/quit timing test, v1.1
+# ScoreSight (USC fork) - macOS build + launch/quit timing test, v1.2
 #
 # What it does:
 #   1. Checks this Mac (Apple Silicon, Xcode command line tools, Homebrew)
@@ -21,7 +21,7 @@
 # backed up before the test and restored afterwards.
 
 set -u
-VERSION="v1.1"
+VERSION="v1.2"
 BRANCH="${BRANCH:-usc/startup-shutdown-fixes}"
 REPO_URL="https://github.com/jdralla/scoresight.git"
 BASELINE_URL="https://github.com/royshil/scoresight/releases/download/0.1.0/scoresight-macos-arm64-0.1.0.dmg"
@@ -129,7 +129,7 @@ if [ "${SKIP_BUILD:-0}" != "1" ]; then
   pkill -9 -f "$APP_NEW/Contents/MacOS/" 2>/dev/null
   wait "$SMOKE_PID" 2>/dev/null
   if [ "$SMOKE_OK" != "1" ]; then
-    echo; tail -15 "$SMOKE"
+    echo; tail -25 "$SMOKE"
     die "The new build did not start (output above, full log: $SMOKE). Send this to Claude."
   fi
   for _ in $(seq 1 50); do port_up || break; sleep 0.1; done
