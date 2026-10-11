@@ -1,0 +1,334 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Hockey score bug (ScoreSight overlay) v2.1</title>
+<link rel="icon" href="data:,">
+<!--
+  HOCKEY SCORE BUG, DRIVEN BY SCORESIGHT 0.3.0 OR LATER  (version 2.1, Oct 11 2026)
+  --------------------------------------------------------------------------------
+  v2.1: the bug keeps a fixed size. The PP badge has its own reserved space on each
+  side, and the score and clock cells no longer change width with their digits.
+
+  A custom overlay for ScoreSight's built-in "Browser overlays" system. It replaces
+  v1.0, which polled http://localhost:18099/json. Values now arrive the moment they
+  change, through ScoreSight's own overlay client (/overlay/client.js).
+
+  INSTALL
+  1. In ScoreSight: Outputs tab > HTTP server > Browser overlays > the folder button
+     next to the Overlay list. That opens the overlays folder
+     (macOS: ~/Library/Application Support/scoresight/overlays).
+  2. Copy this file into that folder as  usc-scorebug.html
+  3. It is then served at
+       http://localhost:18099/overlay/custom/usc-scorebug.html
+     and appears in ScoreSight's Overlay list.
+  4. In Wirecast: Add Source > Web Page, that address, size 1920 x 1080.
+     (Any other size works too: the bug scales with the page width.)
+
+  FIELDS  (name the boxes in ScoreSight EXACTLY like this)
+       Home Score, Away Score, Time (or Clock), Period,
+       Home Pen 1, Home Pen 2, Away Pen 1, Away Pen 2
+     Optional, if the board shows jersey numbers next to the penalty timers:
+       Home Pen 1 Player, Home Pen 2 Player, Away Pen 1 Player, Away Pen 2 Player
+     Set the penalty boxes' Type to Time. Missing boxes are simply not shown.
+
+  OPTIONS  (append to the address, same names as v1.0)
+       ?home=USC&away=UCLA                   team names
+       &homeColor=990000&awayColor=2D68C4    hex without the #
+       &scale=0.9                            shrink or grow the whole bug
+       &bg=00ff00                            solid background for chroma keying
+       &debug=1                              show raw values, states and the connection
+       &server=http://192.168.1.20:18099     only when this file is NOT served by
+                                             ScoreSight (opened as a file, or hosted
+                                             elsewhere). Default then: localhost:18099
+
+  MISREAD PROTECTION  (same behaviour as v1.0, now measured in time, not in polls,
+  because values are pushed only when they change)
+     - a score goes up only after the new value has held for 0.6 s, down after 1.6 s
+     - the clock ignores a jump of more than 3 s until a second reading confirms it,
+       and keeps the last good value during dropouts
+     - a penalty chip appears after 0.4 s of consistent readings and disappears
+       after 1.2 s of blank readings; its time turns gold in the last 10 seconds
+     - "PP" shows for the team with fewer penalties running
+     - the period shows as 1st, 2nd, 3rd, OT, SO
+-->
+<style>
+  :root{
+    --scale: 1;
+    --fit: 1;
+    --home: #990000;
+    --away: #2D68C4;
+    --ink: #FFFFFF;
+    --panel: rgba(12, 16, 28, 0.92);
+    --panel2: rgba(30, 36, 52, 0.92);
+    --gold: #FFC72C;
+  }
+  html, body{ margin:0; padding:0; background:transparent; width:100%; height:100%; overflow:hidden; }
+  body{ font-family:"Helvetica Neue", Helvetica, Arial, sans-serif; color:var(--ink); font-variant-numeric:tabular-nums; -webkit-font-smoothing:antialiased; }
+  .wrap{ position:absolute; left:calc(64px * var(--fit)); top:calc(56px * var(--fit)); transform:scale(calc(var(--scale) * var(--fit))); transform-origin:top left; }
+  .bug{ display:flex; align-items:stretch; height:76px; border-radius:10px; overflow:hidden; box-shadow:0 6px 18px rgba(0,0,0,.35); }
+  .team{ display:flex; align-items:center; gap:18px; padding:0 22px; background:var(--panel); }
+  .team.home{ border-left:14px solid var(--home); }
+  .team.away{ border-right:14px solid var(--away); flex-direction:row-reverse; }
+  .name{ font-size:34px; font-weight:700; letter-spacing:.02em; width:96px; white-space:nowrap; overflow:hidden; }
+  .team.away .name{ text-align:right; }
+  .score{ font-size:48px; font-weight:800; width:64px; text-align:center; line-height:1; }
+  .score.pop{ animation:pop .6s ease-out; }
+  @keyframes pop{ from{ transform:scale(1.45); color:var(--gold); } to{ transform:scale(1); } }
+  .center{ display:flex; align-items:center; gap:18px; padding:0 26px; background:var(--panel2); border-left:1px solid rgba(255,255,255,.12); border-right:1px solid rgba(255,255,255,.12); }
+  .clock{ font-size:44px; font-weight:800; width:150px; text-align:center; line-height:1; }
+  .period{ font-size:22px; font-weight:700; color:var(--gold); width:44px; text-align:center; }
+  .pp{ font-size:18px; font-weight:800; color:#0B1020; background:var(--gold); padding:4px 8px; border-radius:6px; display:inline-block; visibility:hidden; }
+  .team.onpp .pp{ visibility:visible; }
+  .pens{ display:flex; justify-content:space-between; margin-top:8px; }
+  .side{ display:flex; gap:8px; }
+  .side.away{ justify-content:flex-end; }
+  .pen{ display:none; align-items:center; gap:10px; background:var(--panel); border-radius:8px; padding:6px 12px; font-size:24px; font-weight:700; }
+  .pen.on{ display:flex; }
+  .side.home .pen{ border-left:6px solid var(--home); }
+  .side.away .pen{ border-right:6px solid var(--away); }
+  .pen .num{ opacity:.8; font-size:20px; }
+  .pen .num:empty{ display:none; }
+  .pen.warn .time{ color:var(--gold); }
+  .stale .clock, .stale .score{ opacity:.85; }
+  #debug{ position:absolute; left:64px; bottom:48px; font:16px/1.4 Menlo, Consolas, monospace; background:rgba(0,0,0,.7); padding:10px 14px; border-radius:8px; white-space:pre; display:none; }
+</style>
+</head>
+<body>
+<div class="wrap" id="wrap">
+  <div class="bug">
+    <div class="team home" id="teamHome">
+      <span class="name" id="homeName">HOME</span>
+      <span class="score" id="homeScore">0</span>
+      <span class="pp">PP</span>
+    </div>
+    <div class="center">
+      <span class="clock" id="clock">20:00</span>
+      <span class="period" id="period">1st</span>
+    </div>
+    <div class="team away" id="teamAway">
+      <span class="name" id="awayName">AWAY</span>
+      <span class="score" id="awayScore">0</span>
+      <span class="pp">PP</span>
+    </div>
+  </div>
+  <div class="pens">
+    <div class="side home">
+      <div class="pen" id="hp1"><span class="num"></span><span class="time"></span></div>
+      <div class="pen" id="hp2"><span class="num"></span><span class="time"></span></div>
+    </div>
+    <div class="side away">
+      <div class="pen" id="ap1"><span class="num"></span><span class="time"></span></div>
+      <div class="pen" id="ap2"><span class="num"></span><span class="time"></span></div>
+    </div>
+  </div>
+</div>
+<div id="debug"></div>
+
+<script>
+(function(){
+"use strict";
+
+var CONFIG = {
+  tickMs: 100,            // how often the held values are re-checked
+  scoreUpMs: 600,         // a higher score must hold this long before it shows
+  scoreDownMs: 1600,      // a lower score (disallowed goal) must hold longer
+  periodMs: 600,          // a new period must hold this long
+  clockJumpSec: 3,        // a clock further than this from the last one needs confirming
+  clockConfirmMs: 300,    // ...by a second, nearby reading at least this much later
+  penaltyOnMs: 400,       // consistent readings before a penalty chip appears
+  penaltyOffMs: 1200,     // blank readings before a penalty chip disappears
+  staleMs: 2000,          // no good clock for this long dims the clock and scores
+  // The first name that exists in ScoreSight is used.
+  boxes: {
+    homeScore:["Home Score"], awayScore:["Away Score"], clock:["Time", "Clock"], period:["Period"],
+    hp1:["Home Pen 1"], hp2:["Home Pen 2"], ap1:["Away Pen 1"], ap2:["Away Pen 2"],
+    hp1n:["Home Pen 1 Player"], hp2n:["Home Pen 2 Player"], ap1n:["Away Pen 1 Player"], ap2n:["Away Pen 2 Player"]
+  }
+};
+
+var q = new URLSearchParams(location.search);
+var root = document.documentElement.style;
+if (q.get("home")) document.getElementById("homeName").textContent = q.get("home").toUpperCase();
+if (q.get("away")) document.getElementById("awayName").textContent = q.get("away").toUpperCase();
+if (q.get("homeColor")) root.setProperty("--home", "#" + q.get("homeColor").replace("#",""));
+if (q.get("awayColor")) root.setProperty("--away", "#" + q.get("awayColor").replace("#",""));
+if (q.get("scale")) root.setProperty("--scale", q.get("scale"));
+if (q.get("bg")) document.body.style.background = "#" + q.get("bg").replace("#","");
+var DEBUG = q.get("debug") === "1";
+if (DEBUG) document.getElementById("debug").style.display = "block";
+
+// Designed at 1920 px wide; follow the page width like the built-in overlays.
+function fit(){ root.setProperty("--fit", String((window.innerWidth || 1920) / 1920)); }
+fit(); window.addEventListener("resize", fit);
+
+var el = function(id){ return document.getElementById(id); };
+var ui = {
+  homeScore: el("homeScore"), awayScore: el("awayScore"), clock: el("clock"), period: el("period"),
+  teamHome: el("teamHome"), teamAway: el("teamAway"),
+  pens: { hp1: el("hp1"), hp2: el("hp2"), ap1: el("ap1"), ap2: el("ap2") }
+};
+
+// ---------- validators (unchanged from v1.0) ----------
+function clean(s){ return String(s == null ? "" : s).trim().replace(/[Oo]/g, "0").replace(/[lI|]/g, "1").replace(/\s+/g, ""); }
+function parseScore(s){ s = clean(s); return /^\d{1,2}$/.test(s) ? parseInt(s, 10) : null; }
+function parseClock(s){
+  s = clean(s).replace(/;/g, ":");
+  var m = s.match(/^(\d{1,2}):(\d{2})$/);
+  if (m && parseInt(m[2],10) < 60) return { text: parseInt(m[1],10) + ":" + m[2], sec: parseInt(m[1],10)*60 + parseInt(m[2],10) };
+  m = s.match(/^(\d{1,2})[.:](\d)$/);            // under a minute: tenths, e.g. 45.3
+  if (m) return { text: m[1] + "." + m[2], sec: parseInt(m[1],10) + parseInt(m[2],10)/10 };
+  m = s.match(/^(\d{1,3})$/);                     // some boards drop the colon under 1:00
+  if (m && parseInt(m[1],10) < 100) return { text: "0:" + ("0" + m[1]).slice(-2), sec: parseInt(m[1],10) };
+  return null;
+}
+function parsePeriod(s){
+  // ScoreSight's own Period field adds the ordinal ("1st", "4th"): drop it first
+  s = clean(s).toUpperCase().replace(/(ST|ND|RD|TH)$/, "");
+  if (/^[1-3]$/.test(s)) return s + (s === "1" ? "st" : s === "2" ? "nd" : "rd");
+  if (s === "4" || s === "0T" || s === "OT") return "OT";
+  if (s === "5" || s === "S0" || s === "SO") return "SO";
+  return null;
+}
+function parsePlayer(s){ s = clean(s); return /^\d{1,2}$/.test(s) ? "#" + s : ""; }
+
+// ---------- stabilizers (time-based) ----------
+// A new value is shown only after it has been the reading for `need` ms.
+function Stable(){ this.value = null; this.candidate = null; this.since = 0; }
+Stable.prototype.feed = function(v, need, now){
+  if (v === null || v === undefined){ this.candidate = null; return this.value; }
+  if (this.value !== null && v === this.value){ this.candidate = null; return this.value; }
+  if (v !== this.candidate){ this.candidate = v; this.since = now; }
+  if (now - this.since >= need){ this.value = v; this.candidate = null; }
+  return this.value;
+};
+
+var scoreH = new Stable(), scoreA = new Stable(), periodS = new Stable();
+var clockLast = null, clockCand = null, clockCandSince = 0, clockStaleSince = 0;
+var pens = { hp1: penState(), hp2: penState(), ap1: penState(), ap2: penState() };
+function penState(){ return { on:false, text:"", num:"", onSince:0, offSince:0, lastSec:null }; }
+
+function feedScore(st, v, now){
+  var need = (st.value !== null && v !== null && v < st.value) ? CONFIG.scoreDownMs : CONFIG.scoreUpMs;
+  return st.feed(v, need, now);
+}
+function feedClock(c, now){
+  if (!c){ if (!clockStaleSince) clockStaleSince = now; return; }
+  var accept = (clockLast === null) || Math.abs(c.sec - clockLast.sec) <= CONFIG.clockJumpSec;
+  if (!accept){
+    // A real jump (a new period, a corrected clock) keeps reading near the new
+    // value; a misread doesn't.
+    if (clockCand && Math.abs(c.sec - clockCand.sec) <= CONFIG.clockJumpSec){
+      if (now - clockCandSince >= CONFIG.clockConfirmMs) accept = true;
+    } else { clockCand = c; clockCandSince = now; }
+  }
+  if (accept){ clockLast = c; clockCand = null; clockStaleSince = 0; }
+}
+function feedPen(p, c, num, now){
+  if (c){
+    p.offSince = 0;
+    var consistent = p.lastSec === null || Math.abs(c.sec - p.lastSec) <= CONFIG.clockJumpSec;
+    p.lastSec = c.sec;
+    if (p.on){ if (consistent){ p.text = c.text; p.num = num || p.num; } }
+    else {
+      if (!consistent || !p.onSince) p.onSince = now;
+      if (now - p.onSince >= CONFIG.penaltyOnMs){ p.on = true; p.text = c.text; p.num = num || ""; }
+    }
+  } else {
+    p.onSince = 0;
+    if (p.on){
+      if (!p.offSince) p.offSince = now;
+      if (now - p.offSince >= CONFIG.penaltyOffMs){ p.on = false; p.text = ""; p.num = ""; p.lastSec = null; p.offSince = 0; }
+    } else { p.lastSec = null; }
+  }
+}
+
+// ---------- render ----------
+function setScore(node, value){
+  var text = String(value);
+  if (node.textContent === text) return;
+  var first = node.getAttribute("data-set") !== "1";
+  node.textContent = text; node.setAttribute("data-set", "1");
+  if (!first){ node.classList.remove("pop"); void node.offsetWidth; node.classList.add("pop"); }
+}
+function render(connected){
+  if (scoreH.value !== null) setScore(ui.homeScore, scoreH.value);
+  if (scoreA.value !== null) setScore(ui.awayScore, scoreA.value);
+  if (periodS.value !== null) ui.period.textContent = periodS.value;
+  if (clockLast) ui.clock.textContent = clockLast.text;
+  document.body.classList.toggle("stale", !!clockStaleSince && Date.now() - clockStaleSince > CONFIG.staleMs);
+
+  var homeActive = 0, awayActive = 0;
+  Object.keys(pens).forEach(function(k){
+    var p = pens[k], node = ui.pens[k];
+    node.classList.toggle("on", p.on);
+    node.classList.toggle("warn", p.on && p.lastSec !== null && p.lastSec <= 10);
+    node.querySelector(".time").textContent = p.text;
+    node.querySelector(".num").textContent = p.num;
+    if (p.on){ if (k.charAt(0) === "h") homeActive++; else awayActive++; }
+  });
+  ui.teamHome.classList.toggle("onpp", awayActive > homeActive);
+  ui.teamAway.classList.toggle("onpp", homeActive > awayActive);
+
+  if (DEBUG){
+    var S = window.ScoreSight;
+    var lines = ["feed: " + (S ? (connected ? "connected (" + S.transport + ")" : "not connected") : "overlay client not loaded"),
+                 "clock: " + (clockLast ? clockLast.text : "-") + (clockStaleSince ? " (stale)" : "")];
+    if (S) Object.keys(CONFIG.boxes).forEach(function(k){
+      var n = boxName(k), f = n && S.fields[n];
+      if (f) lines.push(n + ": '" + f.value + "' [" + f.state + "]");
+    });
+    el("debug").textContent = lines.join("\n");
+  }
+}
+
+// ---------- reading ScoreSight's fields ----------
+function boxName(key){
+  var S = window.ScoreSight, names = CONFIG.boxes[key];
+  if (!S) return null;
+  for (var i = 0; i < names.length; i++) if (S.fields[names[i]]) return names[i];
+  return null;
+}
+// The value of a box while its reading is good; "" for a blank, rejected or
+// missing one (a penalty timer that isn't running reads blank).
+function readBox(key){
+  var n = boxName(key);
+  if (!n) return "";
+  var f = window.ScoreSight.fields[n];
+  return f && f.good ? f.value : "";
+}
+function tick(){
+  var S = window.ScoreSight, now = Date.now();
+  var connected = !!(S && S.connected);
+  if (!connected){ feedClock(null, now); render(false); return; }
+  feedScore(scoreH, parseScore(readBox("homeScore")), now);
+  feedScore(scoreA, parseScore(readBox("awayScore")), now);
+  periodS.feed(parsePeriod(readBox("period")), CONFIG.periodMs, now);
+  feedClock(parseClock(readBox("clock")), now);
+  feedPen(pens.hp1, parseClock(readBox("hp1")), parsePlayer(readBox("hp1n")), now);
+  feedPen(pens.hp2, parseClock(readBox("hp2")), parsePlayer(readBox("hp2n")), now);
+  feedPen(pens.ap1, parseClock(readBox("ap1")), parsePlayer(readBox("ap1n")), now);
+  feedPen(pens.ap2, parseClock(readBox("ap2")), parsePlayer(readBox("ap2n")), now);
+  render(true);
+}
+
+// ---------- load ScoreSight's overlay client ----------
+// Served by ScoreSight: the client comes from the same server. Opened as a file
+// or hosted elsewhere: from ?server=, or localhost:18099.
+var server = (q.get("server") || "").replace(/\/+$/, "");
+if (!server && !/^https?:$/.test(location.protocol)) server = "http://localhost:18099";
+var client = document.createElement("script");
+client.src = server + "/overlay/client.js";
+client.onload = function(){
+  document.addEventListener("scoresight:update", tick);
+  document.addEventListener("scoresight:connection", tick);
+  tick();
+};
+document.body.appendChild(client);
+
+render(false);
+setInterval(tick, CONFIG.tickMs);
+})();
+</script>
+</body>
+</html>

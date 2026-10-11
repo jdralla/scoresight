@@ -1,0 +1,42 @@
+name: Release the score bug
+
+on:
+  push:
+    branches: ['usc-scorebug']
+    paths: ['usc-scorebug.html', '.github/workflows/release.yaml']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="$(grep -o -m1 'ScoreSight overlay) v[0-9.]*' usc-scorebug.html | grep -o '[0-9.]*$')"
+          [ -n "$VERSION" ] || { echo "no version in usc-scorebug.html"; exit 1; }
+          TAG="scorebug-v$VERSION"
+          awk -v v="$VERSION" '$0 ~ "^## "v" " {on=1; next} /^## / {on=0} on' CHANGELOG.md > notes.md
+          cat >> notes.md <<'NOTES'
+
+          ### Install
+          1. Download **usc-scorebug.html** below.
+          2. In ScoreSight (0.3.0 or later): **Outputs** tab > **HTTP server** > under **Browser overlays**, click the folder button next to the **Overlay** list.
+          3. Drag the file into the folder that opens, replacing any older copy.
+          4. In Wirecast, add a **Web Page** source, 1920 x 1080, with the address
+             `http://localhost:18099/overlay/custom/usc-scorebug.html?home=USC&away=CAL&homeColor=990000&awayColor=003262`
+
+          Full instructions: https://github.com/jdralla/scoresight/tree/usc-scorebug#readme
+          NOTES
+          sed -i 's/^          //' notes.md
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" usc-scorebug.html --clobber
+          else
+            gh release create "$TAG" usc-scorebug.html --target "$GITHUB_SHA" \
+              --title "USC score bug $VERSION" --notes-file notes.md
+          fi
