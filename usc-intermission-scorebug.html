@@ -1,0 +1,468 @@
+<!doctype html>
+<!--
+  Hockey Intermission Bug (ScoreSight overlay) v1.0
+
+  Displays:
+    - Home team name, logo, and score
+    - Away team name, logo, and score
+    - Current intermission (1st or 2nd)
+    - Intermission countdown using the scoreboard's Time field
+
+  ScoreSight fields:
+    - Home Score
+    - Away Score
+    - Period
+    - Time
+
+  URL parameters:
+    home        Home team name and logo filename
+    away        Away team name and logo filename
+    homeColor   Home team color (hex, with or without #)
+    awayColor   Away team color (hex, with or without #)
+    server      Optional ScoreSight server URL
+
+  Team logos:
+    Logos must be stored in the "logos" folder.
+
+    The home/away parameter is also used as the logo filename.
+    The overlay first looks for .png and falls back to .jpg.
+
+    Example:
+      ?home=USC&away=CAL
+
+    Loads:
+      logos/usc.png  (or logos/usc.jpg)
+      logos/cal.png  (or logos/cal.jpg)
+
+  Example Wirecast URL:
+    http://localhost:18099/overlay/custom/intermission.html?home=USC&away=CAL&homeColor=990000&awayColor=003262
+
+  Optional custom ScoreSight server:
+    &server=http://localhost:18099
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Hockey Intermission Bug v1.0</title>
+    <link rel="icon" href="data:," />
+
+    <style>
+      :root {
+        --home: #990000;
+        --away: #2d68c4;
+        --ink: #ffffff;
+        --panel: rgba(12, 16, 28, 0.94);
+        --panel2: rgba(30, 36, 52, 0.94);
+        --gold: #ffc72c;
+      }
+
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background: transparent;
+      }
+
+      body {
+        font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+        color: var(--ink);
+        font-variant-numeric: tabular-nums;
+        -webkit-font-smoothing: antialiased;
+      }
+
+      .intermission {
+        position: absolute;
+        left: 50%;
+        top: 56px;
+        transform: translateX(-50%);
+
+        display: flex;
+        align-items: center;
+
+        background: var(--panel);
+        border-radius: 12px;
+        overflow: hidden;
+
+        box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+      }
+
+      .team {
+        display: flex;
+        align-items: center;
+        align-self: stretch;
+        gap: 18px;
+        padding: 16px 24px;
+        box-sizing: border-box;
+        width: 320px;
+        min-width: 320px;
+        flex-shrink: 0;
+      }
+
+      .team.home {
+        border-left: 14px solid var(--home);
+      }
+
+      .team.away {
+        border-right: 14px solid var(--away);
+        flex-direction: row-reverse;
+      }
+
+      .team.home .score {
+        position: relative;
+        left: -8px;
+      }
+
+      .team.away .score {
+        position: relative;
+        left: 8px;
+      }
+
+      .team-logo {
+        width: 64px;
+        height: 64px;
+        object-fit: contain;
+        flex-shrink: 0;
+      }
+
+      .name {
+        font-size: 28px;
+        font-weight: 700;
+        white-space: nowrap;
+        width: 130px;
+        flex: 0 0 130px;
+        text-align: center;
+      }
+
+      .score {
+        font-size: 54px;
+        font-weight: 800;
+        min-width: 56px;
+        text-align: center;
+      }
+
+      .center {
+        min-width: 330px;
+        padding: 14px 32px;
+        text-align: center;
+
+        background: var(--panel2);
+
+        border-left: 1px solid rgba(255, 255, 255, 0.12);
+        border-right: 1px solid rgba(255, 255, 255, 0.12);
+      }
+
+      .label {
+        color: var(--gold);
+        font-size: 22px;
+        font-weight: 800;
+        letter-spacing: 0.08em;
+      }
+
+      .clock {
+        margin-top: 4px;
+        font-size: 52px;
+        font-weight: 800;
+      }
+    </style>
+  </head>
+
+  <body>
+    <div class="intermission">
+      <div class="team home">
+        <img class="team-logo" id="homeLogo" src="" alt="" />
+        <span class="name" id="homeName">HOME</span>
+        <span class="score" id="homeScore">0</span>
+      </div>
+
+      <div class="center">
+        <div class="label" id="intermissionLabel">1ST INTERMISSION</div>
+        <div class="clock" id="clock">15:00</div>
+      </div>
+
+      <div class="team away">
+        <img class="team-logo" id="awayLogo" src="" alt="" />
+        <span class="name" id="awayName">AWAY</span>
+        <span class="score" id="awayScore">0</span>
+      </div>
+    </div>
+
+    <script>
+      const q = new URLSearchParams(location.search);
+      var server = (q.get("server") || "").replace(/\/+$/, "");
+
+      if (!server && !/^https?:$/.test(location.protocol)) {
+        server = "http://localhost:18099";
+      }
+
+      function setTeamLogo(team, name) {
+        if (!name) return;
+
+        const logo = document.getElementById(team + "Logo");
+        const base = "logos/" + name.toLowerCase();
+
+        logo.src = base + ".png";
+
+        logo.onerror = function () {
+          this.onerror = null;
+          this.src = base + ".jpg";
+        };
+      }
+
+      if (q.get("home")) {
+        document.getElementById("homeName").textContent = q
+          .get("home")
+          .toUpperCase();
+
+        setTeamLogo("home", q.get("home"));
+      }
+
+      if (q.get("away")) {
+        document.getElementById("awayName").textContent = q
+          .get("away")
+          .toUpperCase();
+
+        setTeamLogo("away", q.get("away"));
+      }
+
+      function setTeamColor(variable, value) {
+  if (!value) return;
+
+  value = value.trim();
+
+  // Allow either "990000" or "#990000".
+  if (!value.startsWith("#")) {
+    value = "#" + value;
+  }
+
+  document.documentElement.style.setProperty(variable, value);
+}
+
+setTeamColor("--home", q.get("homeColor"));
+setTeamColor("--away", q.get("awayColor"));
+
+      const scoreState = {
+        home: { value: null, candidate: null, since: 0 },
+        away: { value: null, candidate: null, since: 0 },
+      };
+
+      const SCORE_CONFIRM_MS = 600;
+
+      function stableScore(team, rawValue) {
+        if (rawValue == null || rawValue === "") return null;
+
+        const value = String(rawValue).trim();
+
+        // Hockey scores should be whole numbers.
+        if (!/^\d+$/.test(value)) return null;
+
+        const state = scoreState[team];
+        const now = Date.now();
+
+        // Already showing this value.
+        if (state.value === value) {
+          state.candidate = null;
+          return value;
+        }
+
+        // New possible score.
+        if (state.candidate !== value) {
+          state.candidate = value;
+          state.since = now;
+          return state.value;
+        }
+
+        // Require the new OCR value to remain stable.
+        if (now - state.since >= SCORE_CONFIRM_MS) {
+          state.value = value;
+          state.candidate = null;
+        }
+
+        return state.value;
+      }
+
+      function parseClock(value) {
+        if (value == null) return null;
+
+        const text = String(value).trim();
+
+        const match = text.match(/^(\d{1,2}):(\d{2})$/);
+        if (!match) return null;
+
+        const minutes = Number(match[1]);
+        const seconds = Number(match[2]);
+
+        if (seconds > 59) return null;
+
+        return {
+          text,
+          seconds: minutes * 60 + seconds,
+        };
+      }
+
+      const clockState = {
+        value: null,
+        seconds: null,
+        candidate: null,
+        candidateSeconds: null,
+        since: 0,
+      };
+
+      const CLOCK_JUMP_SEC = 3;
+      const CLOCK_CONFIRM_MS = 300;
+
+      function stableClock(rawValue) {
+        const parsed = parseClock(rawValue);
+
+        // Ignore invalid OCR and keep displaying the last good value.
+        if (!parsed) {
+          return clockState.value;
+        }
+
+        const now = Date.now();
+
+        // First valid reading.
+        if (clockState.value === null) {
+          clockState.value = parsed.text;
+          clockState.seconds = parsed.seconds;
+          return clockState.value;
+        }
+
+        const difference = Math.abs(parsed.seconds - clockState.seconds);
+
+        // Normal countdown movement.
+        if (difference <= CLOCK_JUMP_SEC) {
+          clockState.value = parsed.text;
+          clockState.seconds = parsed.seconds;
+
+          clockState.candidate = null;
+          clockState.candidateSeconds = null;
+
+          return clockState.value;
+        }
+
+        // Suspicious jump. Don't display it yet.
+        if (clockState.candidate !== parsed.text) {
+          clockState.candidate = parsed.text;
+          clockState.candidateSeconds = parsed.seconds;
+          clockState.since = now;
+
+          return clockState.value;
+        }
+
+        // Accept the jump only if ScoreSight keeps reporting it.
+        if (now - clockState.since >= CLOCK_CONFIRM_MS) {
+          clockState.value = parsed.text;
+          clockState.seconds = parsed.seconds;
+
+          clockState.candidate = null;
+          clockState.candidateSeconds = null;
+        }
+
+        return clockState.value;
+      }
+
+      const periodState = {
+        value: null,
+        candidate: null,
+        since: 0,
+      };
+
+      const PERIOD_CONFIRM_MS = 600;
+
+      function stablePeriod(rawValue) {
+        if (rawValue == null || rawValue === "") {
+          return periodState.value;
+        }
+
+        const value = String(rawValue).trim();
+
+        // For this intermission overlay we only care about periods 1 and 2.
+        if (value !== "1" && value !== "2") {
+          return periodState.value;
+        }
+
+        const now = Date.now();
+
+        // First valid reading.
+        if (periodState.value === null) {
+          periodState.value = value;
+          return periodState.value;
+        }
+
+        // Already showing this period.
+        if (periodState.value === value) {
+          periodState.candidate = null;
+          return periodState.value;
+        }
+
+        // New possible period.
+        if (periodState.candidate !== value) {
+          periodState.candidate = value;
+          periodState.since = now;
+          return periodState.value;
+        }
+
+        // Require the new period to remain stable.
+        if (now - periodState.since >= PERIOD_CONFIRM_MS) {
+          periodState.value = value;
+          periodState.candidate = null;
+        }
+
+        return periodState.value;
+      }
+
+      function updateScore() {
+        if (!window.scoresight) return;
+
+        const home = scoresight.get("Home Score");
+        const away = scoresight.get("Away Score");
+        const period = scoresight.get("Period");
+        const clock = scoresight.get("Time");
+
+        // Stabilize scores.
+        const stableHome = stableScore("home", home);
+        const stableAway = stableScore("away", away);
+
+        if (stableHome != null) {
+          document.getElementById("homeScore").textContent = stableHome;
+        }
+
+        if (stableAway != null) {
+          document.getElementById("awayScore").textContent = stableAway;
+        }
+
+        // Stabilize period.
+        const stablePeriodValue = stablePeriod(period);
+
+        if (stablePeriodValue === "1") {
+          document.getElementById("intermissionLabel").textContent =
+            "1ST INTERMISSION";
+        } else if (stablePeriodValue === "2") {
+          document.getElementById("intermissionLabel").textContent =
+            "2ND INTERMISSION";
+        }
+
+        // Stabilize clock.
+        const stableClockValue = stableClock(clock);
+
+        if (stableClockValue != null) {
+          document.getElementById("clock").textContent = stableClockValue;
+        }
+      }
+
+      var client = document.createElement("script");
+      client.src = server + "/overlay/client.js";
+
+      client.onload = function () {
+        document.addEventListener("scoresight:update", updateScore);
+        document.addEventListener("scoresight:connection", updateScore);
+        updateScore();
+      };
+
+      document.body.appendChild(client);
+    </script>
+  </body>
+</html>
