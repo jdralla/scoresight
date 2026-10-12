@@ -228,20 +228,20 @@
       }
 
       function setTeamColor(variable, value) {
-  if (!value) return;
+        if (!value) return;
 
-  value = value.trim();
+        value = value.trim();
 
-  // Allow either "990000" or "#990000".
-  if (!value.startsWith("#")) {
-    value = "#" + value;
-  }
+        // Allow either "990000" or "#990000".
+        if (!value.startsWith("#")) {
+          value = "#" + value;
+        }
 
-  document.documentElement.style.setProperty(variable, value);
-}
+        document.documentElement.style.setProperty(variable, value);
+      }
 
-setTeamColor("--home", q.get("homeColor"));
-setTeamColor("--away", q.get("awayColor"));
+      setTeamColor("--home", q.get("homeColor"));
+      setTeamColor("--away", q.get("awayColor"));
 
       const scoreState = {
         home: { value: null, candidate: null, since: 0 },
